@@ -13,11 +13,15 @@ from ... import config
 
 INVOICE_HEADER = [
     "账单号", "订阅号", "账户", "期间起", "期间止", "期间天数", "计费天数", "免费天数",
-    "分段合计(元)", "抵扣合计(元)", "账单额(元)", "状态", "校验位", "标记",
+    "分段合计(元)", "抵扣合计(元)", "账单额(元)", "结转抵扣(元)", "应付(元)",
+    "状态", "校验位", "标记",
 ]
 SEGMENT_HEADER = [
     "账单号", "订阅号", "段序", "起", "止", "天数", "套餐", "状态", "月价(元)",
     "日价(元)", "分段金额(元)", "原始行号", "标记",
+]
+CARRY_HEADER = [
+    "事件号", "类型", "账户", "账单号", "来源账单", "期间起", "金额(元)", "余额(元)", "说明",
 ]
 
 
@@ -46,9 +50,24 @@ def invoices_csv(rows: list[dict], check_digit: str) -> str:
             row["invoice_id"], row["sub_id"], row["account"], row["period_start"],
             row["period_end"], row["period_days"], row["billed_days"], row["free_days"],
             money(row["charge_cents"]), money(row["credit_cents"]),
-            money(row["total_cents"]), config.INVOICE_STATUS_LABELS.get(row["status"],
-                                                                        row["status"]),
+            money(row["total_cents"]), money(row.get("carry_applied_cents", 0)),
+            money(row.get("payable_cents", row["total_cents"])),
+            config.INVOICE_STATUS_LABELS.get(row["status"],
+                                             row["status"]),
             check_digit, flags_text(row["flags"]),
+        ])
+    return buffer.getvalue()
+
+
+def carry_csv(rows: list[dict]) -> str:
+    buffer, writer = _writer()
+    writer.writerow(CARRY_HEADER)
+    for row in rows:
+        writer.writerow([
+            row["event_id"], config.CARRY_KIND_LABELS.get(row["kind"], row["kind"]),
+            row["account"], row["invoice_id"], row["source_invoice"],
+            row["period_start"], money(row["amount_cents"]),
+            money(row["balance_after"]), row["note"],
         ])
     return buffer.getvalue()
 

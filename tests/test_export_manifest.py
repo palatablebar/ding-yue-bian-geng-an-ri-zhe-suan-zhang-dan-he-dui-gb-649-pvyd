@@ -22,7 +22,7 @@ def test_manifest_keys_and_digest(run_id, store, sample_dir):
         assert item["sha256"] == hashlib.sha256(payload).hexdigest()
         assert item["bytes"] == len(payload)
     assert data["totals"]["invoice_cents"] == str(expected.TOTAL_CENTS)
-    assert len(data["reconciliations"]) == 4
+    assert len(data["reconciliations"]) == 5
 
 
 def test_check_digit_roundtrip():

@@ -15,7 +15,7 @@ def test_full_flow_from_dirty_sample(client):
     data = response.json()
     assert data["totals"]["invoice_cents"] == str(expected.TOTAL_CENTS)
     assert data["totals"]["invoices"] == str(expected.INVOICE_COUNT)
-    assert [row["status"] for row in data["ledgers"]] == ["ok"] * 4
+    assert [row["status"] for row in data["ledgers"]] == ["ok"] * 5
     for path in PAGES:
         page = client.get(path)
         assert page.status_code == 200, path

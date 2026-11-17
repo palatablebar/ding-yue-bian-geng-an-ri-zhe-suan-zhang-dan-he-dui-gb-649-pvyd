@@ -105,6 +105,10 @@ INVOICE_STATUS_LABELS = {
     "zero": "零金额",
     "conflict": "冲突",
 }
+CARRY_KIND_LABELS = {
+    "open": "结转开单",
+    "apply": "结转抵扣",
+}
 RUN_STATUS_LABELS = {
     "done": "完成",
     "running": "运行中",

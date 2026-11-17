@@ -13,7 +13,7 @@
 | M3 质量隔离 | 看原因码分布、原始行号与原值，导出隔离 CSV | GET /api/quarantine | `app/modules/m3_quality/rules.py` `app/modules/m3_quality/quarantine.py` | `tests/test_quality.py` `tests/test_quality_money.py` |
 | M4 按日折算 | 看每段日价与金额，必要时重算 | GET /api/proration | `app/modules/m4_proration/prorate.py` `app/modules/m4_proration/rounding.py` | `tests/test_proration.py` `tests/test_rounding.py` |
 | M5 变更抵扣 | 看变更序列、被替代关系与抵扣行 | GET /api/changes | `app/modules/m5_changes/segments.py` `app/modules/m5_changes/credit.py` | `tests/test_changes.py` `tests/test_credit.py` |
-| M6 账单对账 | 出账、点行看明细、核对四本账 | GET /api/invoices | `app/modules/m6_invoices/invoice.py` `app/modules/m6_invoices/reconcile.py` | `tests/test_invoices.py` `tests/test_reconcile.py` |
+| M6 账单对账 | 出账、超额结转、点行看明细、核对五本账 | GET /api/invoices、GET /api/carry | `app/modules/m6_invoices/invoice.py` `app/modules/m6_invoices/reconcile.py` `app/modules/m6_invoices/carry.py` | `tests/test_invoices.py` `tests/test_reconcile.py` `tests/test_carry.py` |
 | M7 导出 | 导出账单 CSV、分段 CSV、运行清单 JSON | GET /api/export/invoices.csv | `app/modules/m7_export/csv_out.py` `app/modules/m7_export/manifest_out.py` | `tests/test_export.py` `tests/test_export_manifest.py` |
 
 端到端与不变量分别由 `tests/test_e2e.py`、`tests/test_invariants.py` 固定。
@@ -33,6 +33,7 @@
 | TRAP-23 | 期间端点归属与相邻段接缝 | 两端都算，重复计一天 | 半开 `[start, end)`，相邻段 end 等于下段 start | `app/modules/m5_changes/segments.py`、`app/modules/m2_calendar/days.py` | `tests/test_calendar.py::test_adjacent_segments_cover_period`、`tests/test_changes.py::test_change_on_period_start_zero_day_segment` |
 | TRAP-24 | 抵扣行、补收行各自四舍五入 | 分完合计比总额多 1 分 | 最大余额法把差额补到小数余额最大的分量，负数抵扣同样成立 | `app/modules/m4_proration/rounding.py` | `tests/test_rounding.py::test_largest_remainder_keeps_total`、`tests/test_credit.py::test_component_cents_sum_to_invoice` |
 | TRAP-25 | 同一订阅同一时刻两条变更 | 取到哪条看文件顺序，重跑结果会变 | 同日只让 (生效时刻, 变更号) 最小的一条生效，其余标 `R_CHANGE_OVERLAP` 并记替代关系 | `app/modules/m3_quality/service.py`、`app/modules/m5_changes/segments.py` | `tests/test_changes.py::test_same_instant_overlap_deterministic`、`tests/test_invariants.py::test_change_order_independence` |
+| TRAP-27 | 中途取消的未用额度超过本期剩余应收 | 本期应收被压成负数，或退款改变下期应付，或余额没有逐期依据 | 本期应收钳到 0 为止，超额部分记结转开单挂账户，后续账期按 FIFO 抵扣并逐笔记来源与余额；分录 run 级派生，重跑不重复结转，失败回滚保旧版 | `app/modules/m6_invoices/carry.py`、`app/store.py` | `tests/test_carry.py::test_apply_clamped_at_invoice_total`、`tests/test_carry.py::test_rebuild_is_idempotent`、`tests/test_carry.py::test_failed_settlement_rolls_back` |
 
 ## 对账规则
 
@@ -40,7 +41,10 @@
 - 期间天数账：账单期间天数 = 计费天数 + 免费/暂停天数
 - 金额账：分段合计（分） = 抵扣合计（分） + 账单额合计（分）
 - 出账账：账单行数 = 有分段的账单数
+- 结转账：期初余额 + 本期开单 − 本期抵扣 = 期末余额，且每张账单应付 ≥ 0、分录余额链可回放
 - 恒等式：预缴整期 − Σ抵扣 + Σ补收 = Σ(各段费率 × 段天数)
+- 结转结算：未用额度 = max(0, 整期预缴 − 账单额)（仅含取消段的账单）；
+  结转抵扣 = min(期初余额, 账单额)；应付 = 账单额 − 结转抵扣 ≥ 0
 
 ## 已知不覆盖
 
@@ -49,3 +53,7 @@
 - 变更只支持整日生效：生效时刻按本地日 0 点取整并标记，不做小时级折算。
 - 账期只支持自然月：跨月、跨年区间可算天数，但界面上不提供自定义账期模板。
 - 未做并发写保护：单实例 SQLite，写入串行；多实例部署需要改为外部数据库。
+- 结转只做账户级余额：暂停/降配的未用额度仍在本期账单内抵减（订阅存续），
+  只有取消的外溢为结转余额；不做退款、不做部分转账、不做跨账户调拨。
+- 重结历史期间产生新批次：旧批次页面保留其当时的分录，余额口径以
+  「每期最新 done 批次」实时重算，不级联重写更晚批次的分录。

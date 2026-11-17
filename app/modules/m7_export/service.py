@@ -1,6 +1,6 @@
-"""M7 导出：账单 CSV、分段 CSV、运行清单 JSON。
+"""M7 导出：账单 CSV、分段 CSV、结转分录 CSV、运行清单 JSON。
 
-导出与页面读同一批表，导出行数与合计必须和账单页一致（对账第四本账）。
+导出与页面读同一批表，导出行数与合计必须和账单页一致（对账出账账）。
 """
 from __future__ import annotations
 
@@ -14,6 +14,13 @@ def invoices_payload(store, run_id: str, check_digit: str) -> dict:
     text = csv_out.invoices_csv(rows, check_digit)
     return {"rows": rows, "csv": csv_out.with_bom(text),
             "filename": f"invoices-{run_id}.csv", "count": len(rows)}
+
+
+def carry_payload(store, run_id: str) -> dict:
+    rows = invoice_service.carry_overview(store, run_id)["events"]
+    text = csv_out.carry_csv(rows)
+    return {"rows": rows, "csv": csv_out.with_bom(text),
+            "filename": f"carry-{run_id}.csv", "count": len(rows)}
 
 
 def segments_payload(store, run_id: str) -> dict:

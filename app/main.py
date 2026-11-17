@@ -135,9 +135,11 @@ def create_app(settings: config.Settings | None = None) -> FastAPI:
         store = app.state.store
         run = app.state.ctx.current_run(request.query_params.get("run_id"))
         data = invoice_service.overview(store, run["run_id"]) if run else {
-            "invoices": [], "ledgers": [], "totals": {}}
+            "invoices": [], "ledgers": [], "totals": {},
+            "carry": {"balances": [], "events": [], "summary": {}}}
         return _render(request, "invoices.html", "invoices", invoices=data["invoices"],
-                       ledgers=data["ledgers"], totals=data["totals"])
+                       ledgers=data["ledgers"], totals=data["totals"],
+                       carry=data["carry"])
 
     def _head_ok() -> Response:
         return Response(status_code=200, media_type="text/html; charset=utf-8")

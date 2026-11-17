@@ -4,7 +4,7 @@
 <section class="block">
   <div class="block-head">
     <h2>账单</h2>
-    <span class="sub">{{ totals.get("invoices", 0) }} 张 · 合计 {{ totals.get("invoice_cents", 0)|money }} 元 · 零金额 {{ totals.get("zero_invoices", 0) }}</span>
+    <span class="sub">{{ totals.get("invoices", 0) }} 张 · 合计 {{ totals.get("invoice_cents", 0)|money }} 元 · 应付 {{ totals.get("payable_cents", totals.get("invoice_cents", 0))|money }} 元 · 零金额 {{ totals.get("zero_invoices", 0) }}</span>
   </div>
   {% if invoices %}
   <div class="table-wrap">
@@ -20,6 +20,10 @@
           <th class="num">分段(元)</th>
           <th class="num">抵扣(元)</th>
           <th class="num">账单额(元)</th>
+          <th class="num">期初结转(元)</th>
+          <th class="num">结转抵扣(元)</th>
+          <th class="num">应付(元)</th>
+          <th class="num">期末结转(元)</th>
           <th>状态</th>
           <th>标记</th>
         </tr>
@@ -36,6 +40,10 @@
           <td class="num">{{ row.charge }}</td>
           <td class="num">{{ row.credit }}</td>
           <td class="num">{{ row.amount }}</td>
+          <td class="num">{{ row.carry_in }}</td>
+          <td class="num">{{ row.carry_applied }}</td>
+          <td class="num">{{ row.payable }}</td>
+          <td class="num">{{ row.balance_out }}</td>
           <td class="nowrap">{{ row.status|invoice_status }}</td>
           <td>
             <div class="marks">
@@ -49,6 +57,74 @@
   </div>
   {% else %}
   <p class="empty">这一批没有账单。</p>
+  {% endif %}
+</section>
+
+<section class="block">
+  <div class="block-head">
+    <h2>结转余额</h2>
+    <span class="sub">期初 {{ carry.summary.get("opening_cents", 0)|money }} 元 · 开单 {{ carry.summary.get("opened_cents", 0)|money }} 元 · 抵扣 {{ carry.summary.get("applied_cents", 0)|money }} 元 · 期末 {{ carry.summary.get("closing_cents", 0)|money }} 元</span>
+  </div>
+  {% if carry.balances %}
+  <div class="table-wrap">
+    <table class="table">
+      <thead>
+        <tr>
+          <th>账户</th>
+          <th class="num">期初(元)</th>
+          <th class="num">本期开单(元)</th>
+          <th class="num">本期抵扣(元)</th>
+          <th class="num">期末(元)</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in carry.balances %}
+        <tr>
+          <td class="account" title="{{ row.account }}">{{ row.account }}</td>
+          <td class="num">{{ row.opening|money }}</td>
+          <td class="num">{{ row.opened|money }}</td>
+          <td class="num">{{ row.applied|money }}</td>
+          <td class="num">{{ row.closing|money }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+  {% if carry.events %}
+  <div class="table-wrap">
+    <table class="table">
+      <thead>
+        <tr>
+          <th>事件号</th>
+          <th>类型</th>
+          <th>账户</th>
+          <th>账单号</th>
+          <th>来源账单</th>
+          <th class="num">金额(元)</th>
+          <th class="num">余额(元)</th>
+          <th>说明</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in carry.events %}
+        <tr>
+          <td><code>{{ row.event_id }}</code></td>
+          <td class="nowrap">{{ row.kind_label }}</td>
+          <td class="account" title="{{ row.account }}">{{ row.account }}</td>
+          <td><code>{{ row.invoice_id }}</code></td>
+          <td><code>{{ row.source_invoice }}</code></td>
+          <td class="num">{{ row.amount }}</td>
+          <td class="num">{{ row.balance }}</td>
+          <td>{{ row.note }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+  {% if not carry.events %}
+  <p class="empty">本批没有结转事件：没有取消产生的超额抵扣，也没有历史余额抵扣。</p>
   {% endif %}
 </section>
 
@@ -93,6 +169,7 @@
   <ul class="link-list">
     <li><a class="btn" href="/api/export/invoices.csv">账单 CSV</a></li>
     <li><a class="btn" href="/api/export/segments.csv">分段 CSV</a></li>
+    <li><a class="btn" href="/api/export/carry.csv">结转 CSV</a></li>
     <li><a class="btn" href="/api/export/manifest.json">清单 JSON</a></li>
     <li><a class="btn btn-ghost" href="/api/quarantine.csv">隔离区 CSV</a></li>
   </ul>

@@ -154,6 +154,22 @@ CREATE TABLE IF NOT EXISTS totals (
     value TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS carry_events (
+    run_id TEXT NOT NULL,
+    seq INTEGER NOT NULL,
+    event_id TEXT NOT NULL,
+    account TEXT NOT NULL,
+    sub_id TEXT NOT NULL,
+    invoice_id TEXT NOT NULL,
+    period_start TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    amount_cents INTEGER NOT NULL,
+    balance_after INTEGER NOT NULL,
+    source_invoice TEXT NOT NULL DEFAULT '',
+    note TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_carry_run ON carry_events(run_id, account);
+
 CREATE TABLE IF NOT EXISTS reconciliations (
     run_id TEXT NOT NULL,
     seq INTEGER NOT NULL,
@@ -485,6 +501,123 @@ class Store:
                 return invoice
         return None
 
+    # ---------- 结转分录 ----------
+    def put_carry_events(self, run_id: str, items: list[dict]) -> None:
+        with self.connect() as conn:
+            self._replace_carry_events(conn, run_id, items)
+
+    @staticmethod
+    def _replace_carry_events(conn: sqlite3.Connection, run_id: str,
+                              items: list[dict]) -> None:
+        conn.execute("DELETE FROM carry_events WHERE run_id=?", (run_id,))
+        conn.executemany(
+            """INSERT INTO carry_events (run_id, seq, event_id, account, sub_id,
+                    invoice_id, period_start, kind, amount_cents, balance_after,
+                    source_invoice, note) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+            [(run_id, int(item["seq"]), item["event_id"], item["account"],
+              item["sub_id"], item["invoice_id"], item["period_start"],
+              item["kind"], int(item["amount_cents"]), int(item["balance_after"]),
+              item.get("source_invoice", ""), item.get("note", ""))
+             for item in items],
+        )
+
+    def list_carry_events(self, run_id: str,
+                          invoice_id: str | None = None) -> list[dict]:
+        with self.connect() as conn:
+            if invoice_id:
+                rows = conn.execute(
+                    "SELECT * FROM carry_events WHERE run_id=? AND invoice_id=? "
+                    "ORDER BY seq", (run_id, invoice_id)).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT * FROM carry_events WHERE run_id=? ORDER BY seq",
+                    (run_id,)).fetchall()
+        return [dict(row) for row in rows]
+
+    def carry_opening_events(self, run_id: str,
+                             covered: set[tuple[str, str]]) -> list[dict]:
+        """本批次结算的期初分录：更早 done 批次、未被更新批次替代、且不属于
+        本批次覆盖的 (账户, 期间起)。
+
+        替代规则：同一 (账户, 期间起) 只取「更早 done 批次里最新那一批」的分录；
+        重结失败留在 running 的批次不算数，旧版余额与分录因此原样保留。
+        """
+        with self.connect() as conn:
+            current = conn.execute(
+                "SELECT rowid, created_at FROM runs WHERE run_id=?",
+                (run_id,)).fetchone()
+            done_runs = conn.execute(
+                "SELECT run_id, rowid, created_at FROM runs WHERE status='done'"
+            ).fetchall()
+            coverage = conn.execute(
+                "SELECT DISTINCT run_id, COALESCE(NULLIF(account, ''), sub_id) AS acct,"
+                " period_start FROM invoices"
+            ).fetchall()
+            events = conn.execute("SELECT * FROM carry_events").fetchall()
+
+        current_order = ((current["created_at"], current["rowid"]) if current
+                         else ("~", 1 << 60))
+        before: dict[str, tuple] = {}
+        for row in done_runs:
+            order = (row["created_at"], row["rowid"])
+            if order < current_order:
+                before[row["run_id"]] = order
+        # 每个 (账户, 期间起) 的结算以更早批次中最新一批为准
+        latest: dict[tuple[str, str], tuple] = {}
+        for row in coverage:
+            order = before.get(row["run_id"])
+            pair = (row["acct"], row["period_start"])
+            if order is None or pair in covered:
+                continue
+            if pair not in latest or order > latest[pair][0]:
+                latest[pair] = (order, row["run_id"])
+        picked = []
+        for row in events:
+            pair = (row["account"], row["period_start"])
+            chosen = latest.get(pair)
+            if chosen and chosen[1] == row["run_id"]:
+                picked.append((chosen[0], int(row["seq"]), dict(row)))
+        picked.sort(key=lambda item: (item[0], item[1]))
+        return [row for _, _, row in picked]
+
+    # ---------- 出账 + 结转：同事务 ----------
+    def put_invoice_settlement(self, run_id: str, invoices: list[dict],
+                               carry_events: list[dict],
+                               reconciliations: list[dict], totals: dict) -> None:
+        """账单、结转分录、对账、合计同事务先删后插。
+
+        任一一步失败整体回滚：旧版账单、余额与结转记录原样保留，不留半批。
+        """
+        with self.connect() as conn:
+            for table in ("invoices", "carry_events", "reconciliations", "totals"):
+                conn.execute(f"DELETE FROM {table} WHERE run_id=?", (run_id,))
+            conn.executemany(
+                """INSERT INTO invoices (run_id, invoice_id, sub_id, account, period_start,
+                        period_end, period_days, billed_days, free_days, charge_cents,
+                        credit_cents, total_cents, exact_total, status, flags_json, source_row)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                [(run_id, item["invoice_id"], item["sub_id"], item.get("account", ""),
+                  item["period_start"], item["period_end"], int(item["period_days"]),
+                  int(item["billed_days"]), int(item["free_days"]),
+                  int(item["charge_cents"]), int(item["credit_cents"]),
+                  int(item["total_cents"]), str(item.get("exact_total", "0")),
+                  item.get("status", "ok"),
+                  json.dumps(item.get("flags", []), ensure_ascii=False),
+                  int(item.get("source_row", 0))) for item in invoices],
+            )
+            self._replace_carry_events(conn, run_id, carry_events)
+            conn.executemany(
+                """INSERT INTO reconciliations (run_id, seq, ledger, label, left_text,
+                        right_text, diff_text, status, note) VALUES (?,?,?,?,?,?,?,?,?)""",
+                [(run_id, int(item["seq"]), item["ledger"], item["label"],
+                  item["left_text"], item["right_text"], item["diff_text"],
+                  item["status"], item.get("note", "")) for item in reconciliations],
+            )
+            conn.executemany(
+                "INSERT INTO totals (run_id, key, value) VALUES (?,?,?)",
+                [(run_id, key, str(value)) for key, value in sorted(totals.items())],
+            )
+
     # ---------- 阶段 / 合计 / 对账 ----------
     def put_stages(self, run_id: str, items: list[dict]) -> None:
         with self.connect() as conn:
@@ -555,6 +688,6 @@ class Store:
     def clear_derived(self, run_id: str) -> None:
         """重算前清派生表；订阅、变更、隔离、输入摘要保留。"""
         with self.connect() as conn:
-            for table in ("segments", "components", "invoices", "stages", "totals",
-                          "reconciliations"):
+            for table in ("segments", "components", "invoices", "carry_events",
+                          "stages", "totals", "reconciliations"):
                 conn.execute(f"DELETE FROM {table} WHERE run_id=?", (run_id,))

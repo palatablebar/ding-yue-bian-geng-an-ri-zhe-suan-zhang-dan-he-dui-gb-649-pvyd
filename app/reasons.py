@@ -49,6 +49,9 @@ REASONS: dict[str, tuple[str, str]] = {
     "R_DUP_INVOICE": ("error", "同一订阅同一期间出现两张账单"),
     "R_INVOICE_ZERO": ("info", "账单金额为零"),
     "R_ROUND_ADJUST": ("info", "尾差按最大余额分配到分"),
+    # ---- 结转 ----
+    "R_CARRY_OPEN": ("info", "取消未用额度结转至后续期间"),
+    "R_CARRY_APPLIED": ("info", "本期应付由结转余额抵扣"),
 }
 
 LEVEL_LABELS = {"error": "隔离", "warn": "复核", "info": "归一"}

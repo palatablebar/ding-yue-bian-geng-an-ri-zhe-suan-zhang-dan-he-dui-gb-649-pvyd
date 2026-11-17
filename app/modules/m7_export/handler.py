@@ -1,4 +1,4 @@
-"""M7 路由：账单 CSV、分段 CSV、运行清单 JSON。"""
+"""M7 路由：账单 CSV、分段 CSV、结转分录 CSV、运行清单 JSON。"""
 from __future__ import annotations
 
 from fastapi import APIRouter, Request, Response
@@ -26,6 +26,18 @@ def invoices_csv(request: Request) -> Response:
 def segments_csv(request: Request) -> Response:
     run = web.run_or_404(request)
     data = service.segments_payload(request.app.state.store, run["run_id"])
+    return Response(
+        content=data["csv"], media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition":
+                 f'attachment; filename="{data["filename"]}"',
+                 "X-Row-Count": str(data["count"])},
+    )
+
+
+@router.get("/carry.csv")
+def carry_csv(request: Request) -> Response:
+    run = web.run_or_404(request)
+    data = service.carry_payload(request.app.state.store, run["run_id"])
     return Response(
         content=data["csv"], media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition":

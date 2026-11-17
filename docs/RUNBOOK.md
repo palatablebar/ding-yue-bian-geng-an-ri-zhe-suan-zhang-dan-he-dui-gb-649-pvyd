@@ -13,7 +13,7 @@ curl -s http://127.0.0.1:18208/api/health
 ## 主流程
 
 ```bash
-# 1 采信自带脏样例（订阅 + 变更），返回 run_id 与四本账
+# 1 采信自带脏样例（订阅 + 变更），返回 run_id 与五本账
 curl -s -X POST http://127.0.0.1:18208/api/subscriptions/import \
   -H 'Content-Type: application/json' -d '{}'
 
@@ -28,12 +28,14 @@ curl -s -o /tmp/quarantine.csv http://127.0.0.1:18208/api/quarantine.csv
 curl -s http://127.0.0.1:18208/api/proration | head -c 300
 curl -s -X POST http://127.0.0.1:18208/api/changes | head -c 300
 
-# 5 账单与对账
+# 5 账单、结转与对账
 curl -s http://127.0.0.1:18208/api/invoices | head -c 400
+curl -s http://127.0.0.1:18208/api/carry | head -c 400
 curl -s http://127.0.0.1:18208/api/reconcile
 
 # 6 导出
 curl -s -o /tmp/invoices.csv http://127.0.0.1:18208/api/export/invoices.csv
+curl -s -o /tmp/carry.csv http://127.0.0.1:18208/api/export/carry.csv
 curl -s -o /tmp/manifest.json http://127.0.0.1:18208/api/export/manifest.json
 ```
 
@@ -52,7 +54,11 @@ curl -s -X POST http://127.0.0.1:18208/api/subscriptions/import \
 ## 重算与幂等
 
 - 同一份输入再采信一次：命中 `batch_key`，直接返回原批次，行数与合计不变。
-- 只重算金额：`POST /api/proration`；重算分段与抵扣：`POST /api/changes`。两者都会重新出账并刷新四本账。
+- 只重算金额：`POST /api/proration`；重算分段与抵扣：`POST /api/changes`。两者都会重新出账并刷新五本账。
+- 结转分录随出账一起重算：同一批次重跑分录逐字不变，不重复结转或冲销；
+  写库失败整体回滚，旧版账单、余额与结转记录原样保留。
+- 跨批次余额只数「更早 done 批次、同一 (账户, 期间起) 取最新批次」的分录：
+  重结历史期间会产生新批次替代旧批次的同期间分录，失败留在 running 的批次不计入。
 - 想强制新建批次：改任一输入文件的内容（`batch_key` 由输入 sha256 决定）。
 
 ## 重建数据库
@@ -70,6 +76,7 @@ docker compose up -d --build
 | 采信返回 400 `E_FILE_MISSING` | 文件名不在 `sample_data/`；只接受纯文件名 |
 | 采信返回 400 `E_BAD_FILE_NAME` | 传了路径分隔符或空串 |
 | 账单为 0 | 期间内全是暂停/试用，或月价为 0；看账单标记 `R_INVOICE_ZERO` |
+| 账单应付为 0 但账单额不为 0 | 应付被结转余额抵完；看「结转余额」区与 `/api/carry` 的分录 |
 | 对账不平 | 看 `/api/reconcile` 哪一本账 `status=mismatch`，再看对应明细 |
 | 导出 404 `E_NO_RUN` | 还没批次；先采信 |
 | 容器内 pytest 失败 | `docker compose exec -T app python -m pytest -q`，先看第一个失败 |

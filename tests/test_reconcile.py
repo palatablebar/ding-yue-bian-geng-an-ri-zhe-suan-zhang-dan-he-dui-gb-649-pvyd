@@ -1,4 +1,4 @@
-"""M6 对账：四本账、行数恒等、金额单位、天数合计。"""
+"""M6 对账：五本账、行数恒等、金额单位、天数合计。"""
 from __future__ import annotations
 
 from decimal import Decimal
@@ -9,11 +9,23 @@ from app.modules.m6_invoices import reconcile
 
 def test_all_ledgers_balanced(run_id, store):
     ledgers = store.list_reconciliations(run_id)
-    assert [row["ledger"] for row in ledgers] == ["rows", "days", "amount", "invoices"]
+    assert [row["ledger"] for row in ledgers] == ["rows", "days", "amount", "invoices",
+                                                  "carry"]
     for row in ledgers:
         assert row["status"] == "ok", row
         assert row["diff_text"] in {"0", "0E-8"}
     assert reconcile.overall(ledgers)["status"] == "ok"
+
+
+def test_carry_ledger_zero_without_cancel(run_id, store):
+    # 主样例没有取消：结转账左右都是 0，账照样要平
+    ledger = [row for row in store.list_reconciliations(run_id)
+              if row["ledger"] == "carry"][0]
+    assert ledger["left_text"] == ledger["right_text"] == "0"
+    assert ledger["status"] == "ok"
+    totals = store.list_totals(run_id)
+    assert totals["carry_balance_cents"] == totals["carry_applied_cents"] == "0"
+    assert totals["payable_cents"] == totals["invoice_cents"]
 
 
 def test_rows_ledger_identity(run_id, store):
@@ -65,6 +77,6 @@ def test_exact_gap_zero(run_id, store):
 
 def test_reconcile_api_shape(seeded_client):
     data = seeded_client.get("/api/reconcile").json()
-    assert len(data["ledgers"]) == 4
+    assert len(data["ledgers"]) == 5
     assert data["totals"]["invoices"] == "10"
     assert all(row["status"] == "ok" for row in data["ledgers"])

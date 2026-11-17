@@ -1,4 +1,4 @@
-"""M6 路由：账单、账单明细、对账四账。"""
+"""M6 路由：账单、账单明细、结转余额、对账五账。"""
 from __future__ import annotations
 
 from fastapi import APIRouter, Request
@@ -25,6 +25,13 @@ def invoice_detail(request: Request, invoice_id: str) -> dict:
 
         raise NotFound(f"账单不存在：{invoice_id}", code="E_NO_INVOICE")
     return {"run_id": run["run_id"], **data}
+
+
+@router.get("/carry")
+def carry(request: Request) -> dict:
+    run = web.run_or_404(request)
+    store = request.app.state.store
+    return {"run_id": run["run_id"], **service.carry_overview(store, run["run_id"])}
 
 
 @router.get("/reconcile")

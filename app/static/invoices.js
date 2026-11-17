@@ -59,6 +59,23 @@ function renderInvoice(body, data) {
       [row.days, true], [row.amount, true],
     ]),
   ));
+
+  if (data.carry_events && data.carry_events.length) {
+    body.appendChild(el("h3", "", "结转"));
+    body.appendChild(el("p", "sub",
+      `期初结转 ${invoice.carry_in} 元 · 结转抵扣 ${invoice.carry_applied} 元 · ` +
+      `本期开单 ${invoice.carry_opened} 元 · 应付 ${invoice.payable} 元 · ` +
+      `期末结转 ${invoice.balance_out} 元`));
+    body.appendChild(buildTable(
+      [["事件号", false], ["类型", false], ["来源账单", false], ["金额(元)", true],
+       ["余额(元)", true], ["说明", false]],
+      data.carry_events.map((row) => [
+        [row.event_id, false], [row.kind_label || row.kind, false],
+        [row.source_invoice, false], [row.amount, true], [row.balance, true],
+        [row.note, false],
+      ]),
+    ));
+  }
 }
 
 async function loadInvoice(invoiceId) {

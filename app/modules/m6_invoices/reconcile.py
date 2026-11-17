@@ -1,9 +1,11 @@
-"""账单对账：四本账各自左右相等，差异逐条写清。
+"""账单对账：五本账各自左右相等，差异逐条写清。
 
 1. 行数账：输入数据行 = 可用订阅 + 可用变更 + 隔离行 + 丢弃重复行 + 空白行 + 重复表头
 2. 期间天数账：期间天数 = 计费天数 + 免费/暂停天数
 3. 金额账：分段合计（分） = 抵扣合计（分） + 账单合计（分）
 4. 出账账：账单行数 = 有分段的账单数
+5. 结转账：期初余额 + 本期开单 − 本期抵扣 = 期末余额，且每张账单应付 ≥ 0、
+   分录余额链逐条可回放
 """
 from __future__ import annotations
 
@@ -16,6 +18,7 @@ LEDGERS = (
     ("days", "期间天数账"),
     ("amount", "金额账"),
     ("invoices", "出账账"),
+    ("carry", "结转账"),
 )
 
 
@@ -78,13 +81,36 @@ def invoice_ledger(invoices: list[dict], segments: list[dict]) -> dict:
     }
 
 
+def carry_ledger(view: dict) -> dict:
+    """结转账：期初 + 开单 − 抵扣 = 期末；分录余额链与应付非负一并核对。"""
+    summary = view["summary"]
+    opening = int(summary["opening_cents"])
+    opened = int(summary["opened_cents"])
+    applied = int(summary["applied_cents"])
+    closing = int(summary["closing_cents"])
+    left = opening + opened - applied
+    diff = left - closing
+    consistent = (diff == 0 and summary.get("chain_ok", True)
+                  and summary.get("payable_ok", True))
+    note = (f"期初 {opening} + 开单 {opened} − 抵扣 {applied} = 期末 {closing}（分）；"
+            f"余额链{'可回放' if summary.get('chain_ok', True) else '断链'}，"
+            f"应付{'均不为负' if summary.get('payable_ok', True) else '出现负数'}")
+    return {
+        "ledger": "carry", "label": "结转账",
+        "left_text": str(left), "right_text": str(closing),
+        "diff_text": str(diff), "status": "ok" if consistent else "mismatch",
+        "note": note,
+    }
+
+
 def build(*, counters: dict, invoices: list[dict], segments: list[dict],
-          components: list[dict]) -> list[dict]:
+          components: list[dict], carry: dict) -> list[dict]:
     rows = [
         row_ledger(counters),
         day_ledger(invoices),
         amount_ledger(invoices, components, segments),
         invoice_ledger(invoices, segments),
+        carry_ledger(carry),
     ]
     for index, row in enumerate(rows):
         row["seq"] = index
@@ -102,9 +128,12 @@ def overall(ledgers: list[dict]) -> dict:
 
 
 def totals(counters: dict, invoices: list[dict], segments: list[dict],
-           components: list[dict]) -> dict:
+           components: list[dict], carry: dict | None = None) -> dict:
     charge = sum(int(row["cents"]) for row in components if row["kind"] == "charge")
     credit = -sum(int(row["cents"]) for row in components if row["kind"] == "credit")
+    invoice_cents = sum(int(row["total_cents"]) for row in invoices)
+    summary = (carry or {}).get("summary", {})
+    applied = int(summary.get("applied_cents", 0))
     return {
         "subs_kept": int(counters.get("subs_kept", 0)),
         "changes_kept": int(counters.get("changes_kept", 0)),
@@ -120,8 +149,13 @@ def totals(counters: dict, invoices: list[dict], segments: list[dict],
         "free_days": sum(int(row["free_days"]) for row in invoices),
         "charge_cents": charge,
         "credit_cents": credit,
-        "invoice_cents": sum(int(row["total_cents"]) for row in invoices),
+        "invoice_cents": invoice_cents,
         "zero_invoices": sum(1 for row in invoices if row["total_cents"] == 0),
+        "carry_opening_cents": int(summary.get("opening_cents", 0)),
+        "carry_opened_cents": int(summary.get("opened_cents", 0)),
+        "carry_applied_cents": applied,
+        "carry_balance_cents": int(summary.get("closing_cents", 0)),
+        "payable_cents": invoice_cents - applied,
         "segment_exact_total": str(sum(
             (Decimal(row["amount_exact"]) for row in segments), Decimal("0"))),
         "money_unit": config.MONEY_UNIT,
